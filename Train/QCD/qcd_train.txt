@@ -1,0 +1,20 @@
+Main:numberOfEvents = 10000
+
+Init:showChangedSettings = on      ! list changed settings
+Init:showAllSettings = on         ! list all settings
+Init:showChangedParticleData = on  ! list changed particle data
+Init:showAllParticleData = on     ! list all particle data
+Next:numberCount = 1000            ! print message every n events
+Next:numberShowLHA = 1             ! print LHA information n times
+Next:numberShowInfo = 1            ! print event information n times
+Next:numberShowProcess = 1         ! print process record n times
+Next:numberShowEvent = 1           ! print event record n times
+Stat:showPartonLevel = on          ! additional statistics on MPI
+
+
+Beams:idA = 2212                   ! first beam, p = 2212, pbar = -2212
+Beams:idB = 2212                   ! second beam, p = 2212, pbar = -2212
+Beams:eCM = 13000.                 ! CM energy of collision
+
+HardQCD:all  = on
+PhaseSpace:pTHatMin = 100.
