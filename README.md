@@ -14,3 +14,6 @@ The cards will be placed in Train and Test directories. Only two signal hypothes
 
 Work in progress. Will be updated soon
 
+## References
+
+SVJ data card taken from: https://github.com/cms-svj/SVJProduction/blob/Run2_UL/python/svjHelper.py
