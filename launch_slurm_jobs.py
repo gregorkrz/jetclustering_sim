@@ -1,8 +1,11 @@
 import argparse
+import os
+from time import sleep
 
 parser = argparse.ArgumentParser(description='Run the SVJ scouting')
-parser.add_argument("--input", type=str, help="Name of the input directory with the txt files - Pythia datacards") # Delphes_020425_train2
+parser.add_argument("--input", type=str, help="Name of the input directory with the txt files - Pythia datacards (e.g. Train/ or Test/)")
 parser.add_argument("--output", type=str, help="Name of the output directory, in which to save the root files")
+parser.add_argument("--njobs", "-N", type=int, default=1, help="Number of SLURM jobs to launch per txt file")
 parser.add_argument("--no-submit", "-ns", action="store_true", default=False, help="Do not submit jobs")
 args = parser.parse_args()
 
@@ -35,51 +38,34 @@ srun singularity exec {bindings}  --nv docker://scailfin/delphes-python-centos:l
     """
     return file
 
-import os
-from time import sleep
+os.makedirs("jobs/slurm_files", exist_ok=True)
+os.makedirs("jobs/logs", exist_ok=True)
 
-for file in os.listdir(args.input):
-    if True:#file.endswith(".txt") and "0.3" in file and "900" in file:
+for root, dirs, files in os.walk(args.input):
+    dirs.sort()
+    for file in sorted(files):
+        if not file.endswith(".txt"):
+            continue
         print(file)
         file_id = file.split(".txt")[0]
         file_id_without_part = file_id
-        #if not (file_id_without_part.startswith("SVJ_mZprime-900_mDark-20_rinv-0.3") or ("SVJ_mZprime-700_mDark-20_rinv-0.7"))
         if "_part" in file_id:
             file_id_without_part = file_id.split("_part")[0]
-        in_file = args.input + "/" + file
-        out_folder = args.output + "/" + file_id_without_part
-        out_file = out_folder + "/" + file_id + ".root"
-        if not os.path.exists(out_folder):
-            os.makedirs(out_folder)
-        ftxt = get_slurm_file_text(in_file, out_file, file_id)
-        if not os.path.exists("jobs/slurm_files"):
-            os.makedirs("jobs/slurm_files")
-        if not os.path.exists("jobs/logs"):
-            os.makedirs("jobs/logs")
-        with open(f"jobs/slurm_files/{file_id}.sh", "w") as f:
-            f.write(ftxt)
-        print("Wrote to", f"jobs/slurm_files/{file_id}.sh")
-        if not args.no_submit:
-            os.system(f"sbatch jobs/slurm_files/{file_id}.sh")
-    if not args.no_submit:
-        sleep(0.3) # For some reason this is needed, otherwise some jobs don't get submitted???
+        in_file = os.path.join(root, file)
+        rel_path = os.path.relpath(root, args.input)
+        for job_idx in range(1, args.njobs + 1):
+            job_file_id = f"{file_id}_{job_idx}"
+            out_folder = os.path.join(args.output, rel_path, file_id_without_part)
+            out_file = os.path.join(out_folder, f"{file_id}_{job_idx}.root")
+            os.makedirs(out_folder, exist_ok=True)
+            ftxt = get_slurm_file_text(in_file, out_file, job_file_id)
+            with open(f"jobs/slurm_files/{job_file_id}.sh", "w") as f:
+                f.write(ftxt)
+            print("Wrote to", f"jobs/slurm_files/{job_file_id}.sh")
+            if not args.no_submit:
+                os.system(f"sbatch jobs/slurm_files/{job_file_id}.sh")
+                sleep(0.3)
 
 # Launch the slurm jobs to generate the root files:
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/QCD --output /work/gkrzmanc/jetclustering/data/QCD_test
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_train2 --output /work/gkrzmanc/jetclustering/data/Delphes_020425_train2_PU_PFfix
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/QCDtrain --output /work/gkrzmanc/jetclustering/data/QCDtrain
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_test_noHM --output /work/gkrzmanc/jetclustering/data/Delphes_020425_test_PU_PFfix
-
-
-
-
-
-
-
-## old commands
-
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_test --output /work/gkrzmanc/jetclustering/data/Delphes_020425_test_PU
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_train2 --output /work/gkrzmanc/jetclustering/data/Delphes_020425_train2_PU_PFfix
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_val --output /work/gkrzmanc/jetclustering/data/Delphes_020425_val_PU
-
-#Delphes_020425_test_noHM
+# python launch_slurm_jobs.py --input Train --output /work/gkrzmanc/jetclustering/data/Train -N 10
+# python launch_slurm_jobs.py --input Test --output /work/gkrzmanc/jetclustering/data/Test -N 10
