@@ -92,7 +92,7 @@ def main():
         in_file = os.path.join(args.input, datacard)
 
         for run in range(args.num_runs):
-            run_suffix = f"_run{run}" if args.num_runs > 1 else ""
+            run_suffix = f"_part{run}" if args.num_runs > 1 else ""
             job_id = f"{file_id}{run_suffix}"
 
             out_dir = os.path.join(args.output, hypo)
