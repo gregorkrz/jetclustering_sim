@@ -1,85 +1,121 @@
+"""Generate and optionally submit SLURM jobs for Delphes detector simulation.
+
+Each input Pythia datacard (.txt) is simulated --num-runs times, where each run
+produces 10k events. For example, use --num-runs 50 for 500k events or
+--num-runs 10 for 100k events per datacard.
+"""
+
 import argparse
+import os
+import subprocess
+from time import sleep
 
-parser = argparse.ArgumentParser(description='Run the SVJ scouting')
-parser.add_argument("--input", type=str, help="Name of the input directory with the txt files - Pythia datacards") # Delphes_020425_train2
-parser.add_argument("--output", type=str, help="Name of the output directory, in which to save the root files")
-parser.add_argument("--no-submit", "-ns", action="store_true", default=False, help="Do not submit jobs")
-args = parser.parse_args()
-
-
-def get_slurm_file_text(in_file, out_file, file_id):
-    # file_id is basically in_file without the .txt ending
-    bindings = "-B /t3home/gkrzmanc/ -B /work/gkrzmanc/  -B /pnfs/psi.ch/cms/trivcat/store/user/gkrzmanc/ "
-    partition = "standard"
-    account = "t3"
-    d = "jobs/logs/{}".format(file_id)
-    err = d + "_err.txt"
-    log = d + "_log.txt"
-    file = f"""#!/bin/bash
-#SBATCH --partition={partition}           # Specify the partition
-#SBATCH --account={account}               # Specify the account
-#SBATCH --mem=25000                   # Request 10GB of memory
-#SBATCH --time=07:00:00               # Set the time limit to 1 hour
-#SBATCH --job-name=Delphes_{file_id}  # Name the job
-#SBATCH --error={err}         # Redirect stderr to a log file
-#SBATCH --output={log}         # Redirect stderr to a log file
+SLURM_TEMPLATE = """\
+#!/bin/bash
+#SBATCH --partition={partition}
+#SBATCH --account={account}
+#SBATCH --mem={mem_mb}
+#SBATCH --time={time_limit}
+#SBATCH --job-name=Delphes_{job_id}
+#SBATCH --error={err_log}
+#SBATCH --output={out_log}
 #SBATCH --mail-type=FAIL
 #SBATCH --mail-user=gkrzmanc@student.ethz.ch
+
 export APPTAINER_TMPDIR=/work/gkrzmanc/singularity_tmp
 export APPTAINER_CACHEDIR=/work/gkrzmanc/singularity_cache
-# Otherwise your env vars can mess with the singularity container for some reason
+# Clear host Pythia env vars so they don't interfere with the container
 export PYTHIA8DATA=
 export PYTHIA8=
 export PYTHIA8_DIR=
-srun singularity exec {bindings}  --nv docker://scailfin/delphes-python-centos:latest DelphesPythia8 delphes_card_CMS_pileup_HV.tcl {in_file} {out_file}
-    """
-    return file
 
-import os
-from time import sleep
+BINDINGS="-B /t3home/gkrzmanc/ -B /work/gkrzmanc/ -B /pnfs/psi.ch/cms/trivcat/store/user/gkrzmanc/"
 
-for file in os.listdir(args.input):
-    if True:#file.endswith(".txt") and "0.3" in file and "900" in file:
-        print(file)
-        file_id = file.split(".txt")[0]
-        file_id_without_part = file_id
-        #if not (file_id_without_part.startswith("SVJ_mZprime-900_mDark-20_rinv-0.3") or ("SVJ_mZprime-700_mDark-20_rinv-0.7"))
-        if "_part" in file_id:
-            file_id_without_part = file_id.split("_part")[0]
-        in_file = args.input + "/" + file
-        out_folder = args.output + "/" + file_id_without_part
-        out_file = out_folder + "/" + file_id + ".root"
-        if not os.path.exists(out_folder):
-            os.makedirs(out_folder)
-        ftxt = get_slurm_file_text(in_file, out_file, file_id)
-        if not os.path.exists("jobs/slurm_files"):
-            os.makedirs("jobs/slurm_files")
-        if not os.path.exists("jobs/logs"):
-            os.makedirs("jobs/logs")
-        with open(f"jobs/slurm_files/{file_id}.sh", "w") as f:
-            f.write(ftxt)
-        print("Wrote to", f"jobs/slurm_files/{file_id}.sh")
-        if not args.no_submit:
-            os.system(f"sbatch jobs/slurm_files/{file_id}.sh")
-    if not args.no_submit:
-        sleep(0.3) # For some reason this is needed, otherwise some jobs don't get submitted???
-
-# Launch the slurm jobs to generate the root files:
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/QCD --output /work/gkrzmanc/jetclustering/data/QCD_test
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_train2 --output /work/gkrzmanc/jetclustering/data/Delphes_020425_train2_PU_PFfix
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/QCDtrain --output /work/gkrzmanc/jetclustering/data/QCDtrain
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_test_noHM --output /work/gkrzmanc/jetclustering/data/Delphes_020425_test_PU_PFfix
+srun singularity exec $BINDINGS --nv \\
+    docker://scailfin/delphes-python-centos:latest \\
+    DelphesPythia8 delphes_card_CMS_pileup_HV.tcl {in_file} {out_file}
+"""
 
 
+def build_slurm_script(in_file, out_file, job_id, partition="standard",
+                        account="t3", mem_mb=25000, time_limit="07:00:00"):
+    log_dir = f"jobs/logs/{job_id}"
+    return SLURM_TEMPLATE.format(
+        partition=partition,
+        account=account,
+        mem_mb=mem_mb,
+        time_limit=time_limit,
+        job_id=job_id,
+        err_log=f"{log_dir}_err.txt",
+        out_log=f"{log_dir}_out.txt",
+        in_file=in_file,
+        out_file=out_file,
+    )
 
 
+def hypothesis_name(filename):
+    """Strip _partN suffix and .txt extension to get the hypothesis name."""
+    name = filename.removesuffix(".txt")
+    if "_part" in name:
+        name = name.rsplit("_part", 1)[0]
+    return name
 
 
+def main():
+    parser = argparse.ArgumentParser(
+        description="Generate and submit SLURM jobs for Delphes simulation.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument("--input", type=str, required=True,
+                        help="Input directory containing Pythia datacard .txt files")
+    parser.add_argument("--output", type=str, required=True,
+                        help="Output directory for the produced ROOT files")
+    parser.add_argument("--num-runs", type=int, default=1,
+                        help="Number of simulation runs per datacard file "
+                             "(each run produces 10k events)")
+    parser.add_argument("--no-submit", "-ns", action="store_true", default=False,
+                        help="Generate SLURM scripts without submitting them")
+    args = parser.parse_args()
 
-## old commands
+    os.makedirs("jobs/slurm_files", exist_ok=True)
+    os.makedirs("jobs/logs", exist_ok=True)
 
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_test --output /work/gkrzmanc/jetclustering/data/Delphes_020425_test_PU
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_train2 --output /work/gkrzmanc/jetclustering/data/Delphes_020425_train2_PU_PFfix
-# python launch_slurm_jobs.py --input /work/gkrzmanc/jetclustering/LJP/Delphes_020425_val --output /work/gkrzmanc/jetclustering/data/Delphes_020425_val_PU
+    datacard_files = sorted(f for f in os.listdir(args.input) if f.endswith(".txt"))
+    if not datacard_files:
+        print(f"No .txt datacard files found in {args.input}")
+        return
 
-#Delphes_020425_test_noHM
+    total_jobs = 0
+    for datacard in datacard_files:
+        hypo = hypothesis_name(datacard)
+        file_id = datacard.removesuffix(".txt")
+        in_file = os.path.join(args.input, datacard)
+
+        for run in range(args.num_runs):
+            run_suffix = f"_run{run}" if args.num_runs > 1 else ""
+            job_id = f"{file_id}{run_suffix}"
+
+            out_dir = os.path.join(args.output, hypo)
+            os.makedirs(out_dir, exist_ok=True)
+            out_file = os.path.join(out_dir, f"{file_id}{run_suffix}.root")
+
+            script = build_slurm_script(in_file, out_file, job_id)
+            script_path = f"jobs/slurm_files/{job_id}.sh"
+            with open(script_path, "w") as f:
+                f.write(script)
+
+            total_jobs += 1
+            if not args.no_submit:
+                subprocess.run(["sbatch", script_path], check=True)
+                sleep(0.3)
+
+    events_per_file = total_jobs * 10000
+    print(f"Generated {total_jobs} SLURM job scripts "
+          f"({len(datacard_files)} datacards x {args.num_runs} runs, "
+          f"{events_per_file:,} total events)")
+    if args.no_submit:
+        print("Dry run: jobs were NOT submitted (--no-submit)")
+
+
+if __name__ == "__main__":
+    main()
