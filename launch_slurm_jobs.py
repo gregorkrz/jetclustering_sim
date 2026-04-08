@@ -6,6 +6,7 @@ produces 10k events. For example, use --num-runs 50 for 500k events or
 """
 
 import argparse
+import hashlib
 import os
 import subprocess
 from time import sleep
@@ -33,12 +34,21 @@ BINDINGS="-B /t3home/gkrzmanc/ -B /work/gkrzmanc/ -B /pnfs/psi.ch/cms/trivcat/st
 
 srun singularity exec $BINDINGS --nv \\
     docker://scailfin/delphes-python-centos:latest \\
-    DelphesPythia8 delphes_card_CMS_pileup_HV.tcl {in_file} {out_file}
+    bash -lc 'set -euo pipefail
+seeded_card=$(mktemp "{out_file}.seeded.XXXXXX.cmnd")
+cleanup_seeded_card() {{
+  rm -f "$seeded_card"
+}}
+trap cleanup_seeded_card EXIT
+cp "{in_file}" "$seeded_card"
+printf "\\nRandom:setSeed = on\\nRandom:seed = {random_seed}\\n" >> "$seeded_card"
+DelphesPythia8 delphes_card_CMS_pileup_HV.tcl "$seeded_card" "{out_file}"'
 """
 
 
 def build_slurm_script(in_file, out_file, job_id, partition="standard",
-                        account="t3", mem_mb=25000, time_limit="07:00:00"):
+                        account="t3", mem_mb=25000, time_limit="07:00:00",
+                        random_seed=19780503):
     log_dir = f"jobs/logs/{job_id}"
     return SLURM_TEMPLATE.format(
         partition=partition,
@@ -50,7 +60,14 @@ def build_slurm_script(in_file, out_file, job_id, partition="standard",
         out_log=f"{log_dir}_out.txt",
         in_file=in_file,
         out_file=out_file,
+        random_seed=random_seed,
     )
+
+
+def per_run_seed(file_id, run):
+    """Return a deterministic Pythia8 seed in [1, 900000000]."""
+    digest = hashlib.sha256(f"{file_id}:{run}".encode("utf-8")).hexdigest()
+    return (int(digest[:12], 16) % 900_000_000) + 1
 
 
 def hypothesis_name(filename):
@@ -98,8 +115,14 @@ def main():
             out_dir = os.path.join(args.output, hypo)
             os.makedirs(out_dir, exist_ok=True)
             out_file = os.path.join(out_dir, f"{file_id}{run_suffix}.root")
+            random_seed = per_run_seed(file_id, run)
 
-            script = build_slurm_script(in_file, out_file, job_id)
+            script = build_slurm_script(
+                in_file,
+                out_file,
+                job_id,
+                random_seed=random_seed,
+            )
             script_path = f"jobs/slurm_files/{job_id}.sh"
             with open(script_path, "w") as f:
                 f.write(script)
