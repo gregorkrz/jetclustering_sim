@@ -11,6 +11,11 @@ import os
 import subprocess
 from time import sleep
 
+DETECTOR_CARDS = {
+    "CMS": "delphes_card_CMS_pileup_HV.tcl",
+    "ATLAS": "delphes_card_ATLAS_pileup_HV.tcl",
+}
+
 SLURM_TEMPLATE = """\
 #!/bin/bash
 #SBATCH --partition={partition}
@@ -42,13 +47,14 @@ cleanup_seeded_card() {{
 trap cleanup_seeded_card EXIT
 cp "{in_file}" "$seeded_card"
 printf "\\nRandom:setSeed = on\\nRandom:seed = {random_seed}\\n" >> "$seeded_card"
-DelphesPythia8 delphes_card_CMS_pileup_HV.tcl "$seeded_card" "{out_file}"'
+DelphesPythia8 {detector_card} "$seeded_card" "{out_file}"'
 """
 
 
 def build_slurm_script(in_file, out_file, job_id, partition="standard",
                         account="t3", mem_mb=25000, time_limit="07:00:00",
-                        random_seed=19780503):
+                        random_seed=19780503,
+                        detector_card=DETECTOR_CARDS["CMS"]):
     log_dir = f"jobs/logs/{job_id}"
     return SLURM_TEMPLATE.format(
         partition=partition,
@@ -61,6 +67,7 @@ def build_slurm_script(in_file, out_file, job_id, partition="standard",
         in_file=in_file,
         out_file=out_file,
         random_seed=random_seed,
+        detector_card=detector_card,
     )
 
 
@@ -87,6 +94,9 @@ def main():
                         help="Input directory containing Pythia datacard .txt files")
     parser.add_argument("--output", type=str, required=True,
                         help="Output directory for the produced ROOT files")
+    parser.add_argument("--detector", type=str.upper, choices=sorted(DETECTOR_CARDS),
+                        default="CMS",
+                        help="Detector simulation card to use")
     parser.add_argument("--num-runs", type=int, default=1,
                         help="Number of simulation runs per datacard file "
                              "(each run produces 10k events)")
@@ -96,6 +106,11 @@ def main():
 
     os.makedirs("jobs/slurm_files", exist_ok=True)
     os.makedirs("jobs/logs", exist_ok=True)
+    detector_card = DETECTOR_CARDS[args.detector]
+    if not os.path.isfile(detector_card):
+        raise FileNotFoundError(
+            f"Detector card '{detector_card}' for --detector {args.detector} was not found."
+        )
 
     datacard_files = sorted(f for f in os.listdir(args.input) if f.endswith(".txt"))
     if not datacard_files:
@@ -122,6 +137,7 @@ def main():
                 out_file,
                 job_id,
                 random_seed=random_seed,
+                detector_card=detector_card,
             )
             script_path = f"jobs/slurm_files/{job_id}.sh"
             with open(script_path, "w") as f:
@@ -135,7 +151,7 @@ def main():
     events_per_file = total_jobs * 10000
     print(f"Generated {total_jobs} SLURM job scripts "
           f"({len(datacard_files)} datacards x {args.num_runs} runs, "
-          f"{events_per_file:,} total events)")
+          f"{events_per_file:,} total events, detector={args.detector})")
     if args.no_submit:
         print("Dry run: jobs were NOT submitted (--no-submit)")
 
